@@ -1,0 +1,9 @@
+streamlit
+PyMuPDF
+google-generativeai
+sentence-transformers
+scikit-learn
+python-dotenv
+ftfy
+nltk
+Pillow
