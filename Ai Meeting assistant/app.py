@@ -4,6 +4,8 @@ import json
 import whisperx
 import warnings
 from dotenv import load_dotenv
+import gc
+from google import genai
 
 
 load_dotenv()
@@ -13,6 +15,17 @@ warnings.filterwarnings("ignore")
 DEVICE="cpu"
 COMPUTE_TYPE="int8"
 HF_TOKEN=os.getenv("HF_TOKEN")
+
+client=genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+
+
+def format_transcript(rawdata):
+    cleaned_segments=""
+    for segment in rawdata:
+        speaker=segment.get("speaker","UNKNOWN SPEAKER")
+        text=segment.get("text","").strip()
+        cleaned_segments+=f"{speaker}: {text}\n"
+    return cleaned_segments
 
 
 st.title("AI powered Meeting Assistant~")
@@ -36,19 +49,44 @@ if st.button("Start AI analysis~"):
         audio=whisperx.load_audio(save_path)
         result=model.transcribe(audio,batch_size=16)
     st.success("Transcription complete!")
-    st.info(result)
+    
+    del model
+    gc.collect()
+    
 
     with st.spinner("Aligning timestamps..."):
         model_a,metadata=whisperx.load_align_model(language_code=result["language"],device=DEVICE)
         result=whisperx.align(result["segments"],model_a,metadata,audio,DEVICE,return_char_alignments=False)
     st.success("Alignment complete!")
+    del model_a
+    gc.collect()
+
     
     with st.spinner("Analysing Speakers (Diarization)"):
         diarize_model=whisperx.diarize.DiarizationPipeline(token=HF_TOKEN,device=DEVICE)
         diarize_segments=diarize_model(audio)
         final_result=whisperx.assign_word_speakers(diarize_segments,result)
     st.success("Analysis Complete!")
+    del diarize_model
+    gc.collect()
 
-    st.subheader("Raw output data:")
-    st.json(final_result["segments"])
+    st.subheader("Cleaned Segments:")
+    cleaned_captions=format_transcript(final_result["segments"])
+    st.text(cleaned_captions)
+    
+    with st.spinner("Generating Ai Summary and extracting essential keypoints..."):
 
+        prompt=f"""You are an expert executive assistant. Read the following attached transcript and strictly provide only the following mentioned things dont add anything else in the output other than this:
+        1. Summary: analyse the meeting and provide a short summary of the meeting.
+        2. Key decisions and discussion points: Analyse the meeting transcript and return all the key decisions and dicussion points of the meeting make sure these are in a unordered list(bullet points).
+        3. Action items and deadlines: bullet points of action items, tasks assigned and deadlines(if any) mentionin the exact speaker name.
+        here is the meeting transcript : {cleaned_captions}
+        """
+        response=client.models.generate_content(
+            model="gemini-3.1-flash-lite",
+            contents=prompt,
+        )
+
+    st.divider()
+    st.subheader("Ai Meeting Analysis Results:")
+    st.markdown(response.text)
