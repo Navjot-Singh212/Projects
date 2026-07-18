@@ -51,6 +51,16 @@ def format_transcript(rawdata):
     return cleaned_segments
 
 
+def chunk_transcript(text,words_per_chunk=100):
+    words=text.split()
+    chunks=[]
+    for i in range(0,len(words),words_per_chunk):
+        chunk=" ".join(words[i:i+words_per_chunk])
+        chunks.append(chunk)
+    return chunks
+
+
+
 st.title("AI powered Meeting Assistant")
 tab_process, tab_search= st.tabs(["Process and Evaluate new meeting","Search in the database history"])
 
@@ -127,5 +137,61 @@ with tab_process:
                     "timestamp":firestore.SERVER_TIMESTAMP
                 })
                 
+                searchable_data=f"Summary: {response.text}\n\n Transcript: {cleaned_captions}"
+                chunks=chunk_transcript(searchable_data)
+                embeddings_generator=embedding_model.embed([chunks])
+                meeting_vector=list(embedding_model)
 
-    
+                pinecone_to_upsert=[]
+                for  idx,vector in enumerate(meeting_vector):
+                    pinecone_to_upsert.append({
+                        "id":f"{meeting_id}_chunk_{idx}",
+                        "values":vector,
+                        "metadata":{
+                            "meeting_id":meeting_id,
+                            "title":meeting_title,
+                            "content":chunks[idx]
+                        }
+
+                    })
+                index.upsert(vectors=pinecone_to_upsert)
+                st.success("Meeting securely stored on the cloud~")
+
+
+with tab_search:
+    st.header("Search Past Meetings")
+    search_query=st.text_input("Ask a question or search a topic...(eg: What was the budget for the 'tasty pasta' project)")    
+
+    if "search_results" is not st.session_state:
+        st.session_state.search_results=None
+
+
+
+    if st.button("Search meetings~"):
+        if search_query is not None:
+            st.spinner()
+            query_generator=embedding_model([search_query])
+            query_vector=list(query_generator)[0]
+
+            search_results=index.query(vector=query_vector,include_metadata=True,top_k=3)
+            st.success("Search Complete!")
+            
+            for match in search_results["matches"]:
+                metadata=match["metadata"]
+                similarity_score=match["score"]
+
+                matched_snippet=metadata.get("content","No text snippet attached")
+                matched_title=metadata.get("title","Unkown Title")
+                matched_meeting_id=metadata.get("meeting_id")
+                
+                with st.expander(f"{matched_title}    Match score: {similarity_score:.2f}"):
+                    st.markdown("**Exact Meeting segment:**")
+                    st.info(f"'{matched_snippet}'")
+                    st.caption(f"Source Meeting id: {matched_meeting_id}")
+
+
+                                 
+                                 
+
+        else:
+            st.warning("Please enter a search term first!!!")
