@@ -10,6 +10,7 @@ import firebase_admin
 from firebase_admin import credentials, firestore
 from pinecone import Pinecone
 from fastembed import TextEmbedding
+import streamlit_authenticator as stauth
 
 
 load_dotenv()
@@ -30,7 +31,7 @@ db=firestore.client()
 
 #connecting Pinecone
 pc=Pinecone(api_key=os.getenv("PINECONE_API_KEY"))
-index=pc.index("meeting-assistant01")
+index=pc.Index("meeting-assistant01")
 
 #loading our embedding model
 @st.cache_resource
@@ -59,139 +60,225 @@ def chunk_transcript(text,words_per_chunk=100):
         chunks.append(chunk)
     return chunks
 
+#Firestore authentication
+credential_dict={"usernames": {}}
+
+user_ref=db.collection("users")
+docs=user_ref.stream()
+
+for doc in docs:
+    user_id=doc.id
+    user_data=doc.to_dict()
+    credential_dict["usernames"][user_id]=user_data
+
+cookie_config={
+    "cookie":{
+        "name":"meeting assistant cookie",
+        "expiry_days":30,
+        "key":os.getenv("COOKIE_KEY")
+    },
+    "preauthorised":{
+        "emails":[]
+    }
+}
+authenticator=stauth.Authenticate(credentials=credential_dict,
+                                  cookie_expiry_days=cookie_config["cookie"]["expiry_days"],
+                                  cookie_key=cookie_config["cookie"]["key"],
+                                  cookie_name=cookie_config["cookie"]["name"],)
+
+if "authentication_status" not in st.session_state:
+    st.session_state["authentication_status"]=None
+
+if not st.session_state["authentication_status"]:
+    auth_mode=st.sidebar.radio("Welcome!",["Login","Register a new Account"])
+
+    if auth_mode=="Register a new Account":
+        try:
+            email_reg, username_reg, name_reg=authenticator.register_user()
+
+            if email_reg:
+                st.sidebar.success("User registered successfully!! \n(Please move to login~) ")
+
+                new_user_entry=credential_dict["usernames"][username_reg]
+                db.collection("users").document(username_reg).set(new_user_entry)
+
+        except Exception as e:
+            st.sidebar.error(e)
+    elif auth_mode=="Login":
+        authenticator.login()
 
 
-st.title("AI powered Meeting Assistant")
-tab_process, tab_search= st.tabs(["Process and Evaluate new meeting","Search in the database history"])
+if st.session_state["authentication_status"] is False:
+    st.error("Username/password incorrect")
+if st.session_state["authentication_status"] is None:
+    st.warning("Please enter all the login details~")
 
-with tab_process:
-    st.markdown("Upload your meeting video/audio to get started~")
+if st.session_state["authentication_status"]:
+    username=st.session_state["username"]
+    user_namespace=f"user_{st.session_state['username']}"
+    st.sidebar.title(f"Welcome, {st.session_state['name']}")
+    authenticator.logout("Logout",location="sidebar")
+    st.sidebar.info(f"Your data is securely stored in {user_namespace}")
 
-    uploaded_file=st.file_uploader("",type=["mp3","wav","m4a","mp4"])
 
-    if uploaded_file:
-        save_path=uploaded_file.name
-    
-        with open(save_path,"wb") as f:
-            f.write(uploaded_file.getbuffer())
 
-        st.success(f"Successfully saved your file as {save_path}")
-        st.audio(save_path)
+    st.title("AI powered Meeting Assistant")
+    tab_process, tab_search,tab_dashboard,tab_chat= st.tabs(["Process and Evaluate new meeting","Search in the database history","Meeting Dashboard","Ai Chat"])
 
-        if st.button("Start AI analysis~"):
-            with st.spinner("Transcribing audio...   (this might take a while~)"):
-                model=whisperx.load_model("base",DEVICE,compute_type=COMPUTE_TYPE)
-                audio=whisperx.load_audio(save_path)
-                result=model.transcribe(audio,batch_size=16)
-            st.success("Transcription complete!")
-    
-            del model
-            gc.collect()
-    
+    with tab_process:
+        st.markdown("Upload your meeting video/audio to get started~")
 
-            with st.spinner("Aligning timestamps..."):
-                model_a,metadata=whisperx.load_align_model(language_code=result["language"],device=DEVICE)
-                result=whisperx.align(result["segments"],model_a,metadata,audio,DEVICE,return_char_alignments=False)
-            st.success("Alignment complete!")
-            del model_a
-            gc.collect()
+        uploaded_file=st.file_uploader("",type=["mp3","wav","m4a","mp4"])
 
-    
-            with st.spinner("Analysing Speakers (Diarization)"):
-                diarize_model=whisperx.diarize.DiarizationPipeline(token=HF_TOKEN,device=DEVICE)
-                diarize_segments=diarize_model(audio)
-                final_result=whisperx.assign_word_speakers(diarize_segments,result)
-            st.success("Analysis Complete!")
-            del diarize_model
-            gc.collect()
+        if uploaded_file:
+            save_path=uploaded_file.name
+        
+            with open(save_path,"wb") as f:
+                f.write(uploaded_file.getbuffer())
 
-            st.subheader("Cleaned Segments:")
-            cleaned_captions=format_transcript(final_result["segments"])
-            st.text(cleaned_captions)
-    
-            with st.spinner("Generating Ai Summary and extracting essential keypoints..."):
+            st.success(f"Successfully saved your file as {save_path}")
+            st.audio(save_path)
 
-                prompt=f"""You are an expert executive assistant. Read the following attached transcript and strictly provide only the following mentioned things dont add anything else in the output other than this:
-                1. Summary: analyse the meeting and provide a short summary of the meeting.
-                2. Key decisions and discussion points: Analyse the meeting transcript and return all the key decisions and dicussion points of the meeting make sure these are in a unordered list(bullet points).
-                3. Action items and deadlines: bullet points of action items, tasks assigned and deadlines(if any) mentionin the exact speaker name.
-                here is the meeting transcript : {cleaned_captions}
-               """
-                response=client.models.generate_content(
-                    model="gemini-3.1-flash-lite",
-                    contents=prompt,
-                )
+            if st.button("Start AI analysis~"):
+                with st.spinner("Transcribing audio...   (this might take a while~)"):
+                    model=whisperx.load_model("base",DEVICE,compute_type=COMPUTE_TYPE)
+                    audio=whisperx.load_audio(save_path)
+                    result=model.transcribe(audio,batch_size=16)
+                st.success("Transcription complete!")
+        
+                del model
+                gc.collect()
+        
 
-                st.divider()
-                st.subheader("Ai Meeting Analysis Results:")
-                st.markdown(response.text)
-            with st.spinner("Saving to Cloud Database..."):
-                meeting_id=str(uuid.uuid4())
-                meeting_title="Meeting - "+ meeting_id
+                with st.spinner("Aligning timestamps..."):
+                    model_a,metadata=whisperx.load_align_model(language_code=result["language"],device=DEVICE)
+                    result=whisperx.align(result["segments"],model_a,metadata,audio,DEVICE,return_char_alignments=False)
+                st.success("Alignment complete!")
+                del model_a
+                gc.collect()
 
-                doc_ref=db.collection("meetings").document(meeting_id)
-                doc_ref.set({
-                    "title":meeting_title,
-                    "transcript":cleaned_captions,
-                    "summary and key points":response.text,
-                    "timestamp":firestore.SERVER_TIMESTAMP
-                })
-                
-                searchable_data=f"Summary: {response.text}\n\n Transcript: {cleaned_captions}"
-                chunks=chunk_transcript(searchable_data)
-                embeddings_generator=embedding_model.embed([chunks])
-                meeting_vector=list(embedding_model)
+        
+                with st.spinner("Analysing Speakers (Diarization)"):
+                    diarize_model=whisperx.diarize.DiarizationPipeline(token=HF_TOKEN,device=DEVICE)
+                    diarize_segments=diarize_model(audio)
+                    final_result=whisperx.assign_word_speakers(diarize_segments,result)
+                st.success("Analysis Complete!")
+                del diarize_model
+                gc.collect()
 
-                pinecone_to_upsert=[]
-                for  idx,vector in enumerate(meeting_vector):
-                    pinecone_to_upsert.append({
-                        "id":f"{meeting_id}_chunk_{idx}",
-                        "values":vector,
-                        "metadata":{
-                            "meeting_id":meeting_id,
-                            "title":meeting_title,
-                            "content":chunks[idx]
-                        }
+                st.subheader("Cleaned Segments:")
+                cleaned_captions=format_transcript(final_result["segments"])
+                st.text(cleaned_captions)
+        
+                with st.spinner("Generating Ai Summary and extracting essential keypoints..."):
 
+                    prompt=f"""You are an expert executive assistant. Read the following attached transcript and strictly provide only the following mentioned things dont add anything else in the output other than this:
+                    1. Summary: analyse the meeting and provide a short summary of the meeting.
+                    2. Key decisions and discussion points: Analyse the meeting transcript and return all the key decisions and dicussion points of the meeting make sure these are in a unordered list(bullet points).
+                    3. Action items and deadlines: bullet points of action items, tasks assigned and deadlines(if any) mentionin the exact speaker name.
+                    here is the meeting transcript : {cleaned_captions}
+                """
+                    response=client.models.generate_content(
+                        model="gemini-3.1-flash-lite",
+                        contents=prompt,
+                    )
+
+                    st.divider()
+                    st.subheader("Ai Meeting Analysis Results:")
+                    st.markdown(response.text)
+
+                with st.spinner("Saving to Cloud Database..."):
+                    meeting_id=str(uuid.uuid4())
+                    meeting_title="Meeting - "+ meeting_id
+
+                    doc_ref=db.collection("meetings").document(meeting_id)
+                    doc_ref.set({
+                        "user_id":username,
+                        "title":meeting_title,
+                        "transcript":cleaned_captions,
+                        "summary and key points":response.text,
+                        "timestamp":firestore.SERVER_TIMESTAMP
                     })
-                index.upsert(vectors=pinecone_to_upsert)
-                st.success("Meeting securely stored on the cloud~")
+                    
+                    searchable_data=f"Summary: {response.text}\n\n Transcript: {cleaned_captions}"
+                    chunks=chunk_transcript(searchable_data)
+                    embeddings_generator=embedding_model.embed(chunks)
+                    meeting_vector=list(embeddings_generator)
+
+                    pinecone_to_upsert=[]
+                    for  idx,vector in enumerate(meeting_vector):
+                        pinecone_to_upsert.append({
+                            "id":f"{meeting_id}_chunk_{idx}",
+                            "values":vector.tolist(),
+                            "metadata":{
+                                "meeting_id":meeting_id,
+                                "title":meeting_title,
+                                "content":chunks[idx]
+                            }
+
+                        })
+                    index.upsert(vectors=pinecone_to_upsert,namespace=user_namespace)
+                    st.success("Meeting securely stored on the cloud~")
 
 
-with tab_search:
-    st.header("Search Past Meetings")
-    search_query=st.text_input("Ask a question or search a topic...(eg: What was the budget for the 'tasty pasta' project)")    
+    with tab_search:
+        st.header("Search Past Meetings")
+        search_query=st.text_input("Ask a question or search a topic...(eg: What was the budget for the 'tasty pasta' project)")    
 
-    if "search_results" is not st.session_state:
-        st.session_state.search_results=None
+        if "search_results" not in st.session_state:
+            st.session_state.search_results=None
 
 
 
-    if st.button("Search meetings~"):
-        if search_query is not None:
-            st.spinner()
-            query_generator=embedding_model([search_query])
-            query_vector=list(query_generator)[0]
+        if st.button("Search meetings~"):
+            if search_query:
+                with st.spinner("Searching..."):
+                    query_generator=embedding_model.embed([search_query])
+                    query_vector=list(query_generator)[0].tolist()
 
-            search_results=index.query(vector=query_vector,include_metadata=True,top_k=3)
+                    st.session_state.search_results=index.query(vector=query_vector,include_metadata=True,top_k=3,namespace=user_namespace)
+                
+                                    
+                                    
+
+            else:
+                st.warning("Please enter a search term first!!!")
+
+        if st.session_state.search_results:
             st.success("Search Complete!")
-            
-            for match in search_results["matches"]:
+                
+            for match in st.session_state.search_results["matches"]:
                 metadata=match["metadata"]
                 similarity_score=match["score"]
+                chunk_id=match["id"]
 
                 matched_snippet=metadata.get("content","No text snippet attached")
                 matched_title=metadata.get("title","Unkown Title")
                 matched_meeting_id=metadata.get("meeting_id")
-                
+                    
                 with st.expander(f"{matched_title}    Match score: {similarity_score:.2f}"):
                     st.markdown("**Exact Meeting segment:**")
                     st.info(f"'{matched_snippet}'")
                     st.caption(f"Source Meeting id: {matched_meeting_id}")
 
+                    if st.button("Load Full Meeting Record",key=f"fetch_{chunk_id}"):
+                        with st.spinner("Retrieving full document from the Cloud..."):
+                            doc_ref=db.collection("meetings").document(matched_meeting_id)
+                            doc=doc_ref.get()
 
-                                 
-                                 
+                            if doc.exists:
+                                complete_data=doc.to_dict()
+                                if complete_data.get("user_id")==username:
+                                    st.divider()
+                                    st.subheader(complete_data.get("title"),"")
+                                    st.markdown("### AI Meeting Summary")
+                                    st.markdown(complete_data.get("summary and key points","No summary found!"))
+                                    st.markdown("Full Transcript")
+                                    st.text_area("Transcript:",value=complete_data.get("transcript","No transcript found!"))
 
-        else:
-            st.warning("Please enter a search term first!!!")
+                                else:
+                                    st.error("ACCESS DENIED: You do not have permission to view this meeting file!!!")
+                                    
+                            else:
+                                st.error("Could not find the master document in the Cloud!")
+                                
