@@ -25,7 +25,8 @@ client=genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
 #connecting firebase
 if not firebase_admin._apps:
-    cred=credentials.Certificate("firebase-key.json")
+    firebase_cred=dict(st.secrets["firebase"])
+    cred=credentials.Certificate(firebase_cred)
     firebase_admin.initialize_app(cred)
 db=firestore.client()
 
