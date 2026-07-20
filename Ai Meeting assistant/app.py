@@ -90,14 +90,14 @@ if "authentication_status" not in st.session_state:
     st.session_state["authentication_status"]=None
 
 if not st.session_state["authentication_status"]:
-    auth_mode=st.sidebar.radio("Welcome!",["Login","Register a new Account"])
+    auth_mode=st.sidebar.pills("Welcome!",["Login","Register a new Account"],default="Login",label_visibility="hidden")
 
     if auth_mode=="Register a new Account":
         try:
             email_reg, username_reg, name_reg=authenticator.register_user()
 
             if email_reg:
-                st.sidebar.success("User registered successfully!! \n(Please move to login~) ")
+                st.toast("User registered successfully!! \n(Please move to login~) ")
 
                 new_user_entry=credential_dict["usernames"][username_reg]
                 db.collection("users").document(username_reg).set(new_user_entry)
@@ -282,3 +282,69 @@ if st.session_state["authentication_status"]:
                             else:
                                 st.error("Could not find the master document in the Cloud!")
                                 
+    with tab_dashboard:
+        st.header("Meeting Dasboard")
+
+        user_doc_ref=db.collection("meetings").where("user_id","==",username).stream()
+        meeting_list=list(user_doc_ref)
+
+        if len(meeting_list)==0:
+            st.info("You havent uploaded any meetings yet!\nAdd some to browse through your meeting's data here~")
+        else:
+            st.success(f"Found {len(meeting_list)} meetings in your secret inventory!")
+
+            for doc in meeting_list:
+                data=doc.to_dict()
+                title=data.get("title","Unkown title")
+                
+                with st.expander(title):
+                    st.markdown("AI Summary:")
+                    st.markdown(data.get("summary and key points","No Summary Found!"))
+                    st.markdown("Full Meeting Transcript:")
+                    st.text_area("Raw Text:",value=data.get("transcript","No Transcript Found!"),height=150,key=f"dashehe_{doc.id}")
+                
+    with tab_chat:
+        st.header("Chat about your meetings")
+
+        if "chat_messages" not in st.session_state:
+            st.session_state.chat_messages=[]
+
+        for msg in st.session_state.chat_messages:
+            with st.chat_message(msg["role"]):
+                st.markdown(msg["content"])
+
+        if prompt:=st.chat_input("Ask a question about any of your past meetings~"):
+
+            with st.chat_message("user"):
+                st.markdown(prompt)
+            st.session_state.chat_messages.append({"role":"user","content":prompt})
+
+            with st.chat_message("assistant"):
+                with st.spinner("The Ai is fetching the data from the cloud and is thinking...."):
+                    user_query=list(embedding_model.embed([prompt]))[0].tolist()
+                    search_results=index.query(top_k=3,vector=user_query,namespace=user_namespace,include_metadata=True)
+
+                    retrived_data=""
+                    for match in search_results["matches"]:
+                        title=match["metadata"].get("title","Unknown Title")
+                        match_content=match["metadata"].get("content","")
+                        retrived_data+=f"From {title}:\n{match_content}\n\n"
+                    
+                    ai_prompt = f"""You are an AI executive assistant. Answer the user's question using ONLY the context provided below from their past meetings. 
+                    If the context doesn't contain the answer, politely say "I cannot find that in your meeting history."
+
+                    CONTEXT FROM PAST MEETINGS:
+                    {retrived_data}
+                
+                    USER QUESTION:
+                    {prompt}
+                    """
+                    response=client.models.generate_content(model="gemini-3.1-flash-lite",contents=ai_prompt)
+                    st.markdown(response.text)
+                    st.session_state.chat_messages.append({"role":"assistant","content":response.text}) 
+
+
+
+
+
+    

@@ -1,0 +1,8 @@
+streamlit
+whisperx
+python-dotenv
+google-genai
+firebase-admin
+pinecone-client
+fastembed
+streamlit-authenticator
