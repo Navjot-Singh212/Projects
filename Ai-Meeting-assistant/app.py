@@ -1,10 +1,10 @@
 import streamlit as st
 import os 
 import uuid
-import whisperx
 import warnings
 from dotenv import load_dotenv
 import gc
+# import whisperx
 from google import genai
 import firebase_admin
 from firebase_admin import credentials, firestore
@@ -16,12 +16,12 @@ import streamlit_authenticator as stauth
 load_dotenv()
 warnings.filterwarnings("ignore")
 
-#configurations
-DEVICE="cpu"
-COMPUTE_TYPE="int8"
-HF_TOKEN=os.getenv("HF_TOKEN")
+# #configurations
+# DEVICE="cpu"
+# COMPUTE_TYPE="int8"
+# HF_TOKEN=st.secrets["HF_TOKEN"]
 
-client=genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+client=genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
 
 #connecting firebase
 if not firebase_admin._apps:
@@ -30,8 +30,21 @@ if not firebase_admin._apps:
     firebase_admin.initialize_app(cred)
 db=firestore.client()
 
+def transcribe_audio(audio_file_path):
+    uploaded_audio=client.files.upload(file=audio_file_path)
+    prompt = """
+    Process this meeting audio file and generate a detailed transcription.
+    Requirements:
+    1. Identify distinct speakers (e.g., Speaker 1, Speaker 2).
+    2. Provide timestamps for the conversation segments.
+    3. Output the transcript in a clean, readable format.
+    """
+    response=client.models.generate_content(model="gemini-3.1-flash-lite",contents=[prompt,uploaded_audio])
+    return response.text
+
+
 #connecting Pinecone
-pc=Pinecone(api_key=os.getenv("PINECONE_API_KEY"))
+pc=Pinecone(api_key=st.secrets["PINECONE_API_KEY"])
 index=pc.Index("meeting-assistant01")
 
 #loading our embedding model
@@ -44,13 +57,13 @@ embedding_model=load_embedding_model()
 
 
 
-def format_transcript(rawdata):
-    cleaned_segments=""
-    for segment in rawdata:
-        speaker=segment.get("speaker","UNKNOWN SPEAKER")
-        text=segment.get("text","").strip()
-        cleaned_segments+=f"{speaker}: {text}\n"
-    return cleaned_segments
+# def format_transcript(rawdata):
+#     cleaned_segments=""
+#     for segment in rawdata:
+#         speaker=segment.get("speaker","UNKNOWN SPEAKER")
+#         text=segment.get("text","").strip()
+#         cleaned_segments+=f"{speaker}: {text}\n"
+#     return cleaned_segments
 
 
 def chunk_transcript(text,words_per_chunk=100):
@@ -76,7 +89,7 @@ cookie_config={
     "cookie":{
         "name":"meeting assistant cookie",
         "expiry_days":30,
-        "key":os.getenv("COOKIE_KEY")
+        "key":st.secrets["COOKIE_KEY"]
     },
     "preauthorised":{
         "emails":[]
@@ -141,34 +154,38 @@ if st.session_state["authentication_status"]:
             st.audio(save_path)
 
             if st.button("Start AI analysis~"):
-                with st.spinner("Transcribing audio...   (this might take a while~)"):
-                    model=whisperx.load_model("base",DEVICE,compute_type=COMPUTE_TYPE)
-                    audio=whisperx.load_audio(save_path)
-                    result=model.transcribe(audio,batch_size=16)
-                st.success("Transcription complete!")
+                with st.spinner("Processing audio using Gemini AI..."):
+                    cleaned_captions=transcribe_audio(save_path)
+
+                "this is the code for transcribing audio, aligning timestamps, and Diarization but i couldn't use this as the whisperx library size was too big for deploying on any free service..."
+                # with st.spinner("Transcribing audio...   (this might take a while~)"):
+                #     model=whisperx.load_model("base",DEVICE,compute_type=COMPUTE_TYPE)
+                #     audio=whisperx.load_audio(save_path)
+                #     result=model.transcribe(audio,batch_size=16)
+                # st.success("Transcription complete!")
         
-                del model
-                gc.collect()
+                # del model
+                # gc.collect()
         
 
-                with st.spinner("Aligning timestamps..."):
-                    model_a,metadata=whisperx.load_align_model(language_code=result["language"],device=DEVICE)
-                    result=whisperx.align(result["segments"],model_a,metadata,audio,DEVICE,return_char_alignments=False)
-                st.success("Alignment complete!")
-                del model_a
-                gc.collect()
+                # with st.spinner("Aligning timestamps..."):
+                #     model_a,metadata=whisperx.load_align_model(language_code=result["language"],device=DEVICE)
+                #     result=whisperx.align(result["segments"],model_a,metadata,audio,DEVICE,return_char_alignments=False)
+                # st.success("Alignment complete!")
+                # del model_a
+                # gc.collect()
 
         
-                with st.spinner("Analysing Speakers (Diarization)"):
-                    diarize_model=whisperx.diarize.DiarizationPipeline(token=HF_TOKEN,device=DEVICE)
-                    diarize_segments=diarize_model(audio)
-                    final_result=whisperx.assign_word_speakers(diarize_segments,result)
+                # with st.spinner("Analysing Speakers (Diarization)"):
+                #     diarize_model=whisperx.diarize.DiarizationPipeline(token=HF_TOKEN,device=DEVICE)
+                #     diarize_segments=diarize_model(audio)
+                #     final_result=whisperx.assign_word_speakers(diarize_segments,result)
                 st.success("Analysis Complete!")
-                del diarize_model
-                gc.collect()
+                # del diarize_model
+                # gc.collect()
 
                 st.subheader("Cleaned Segments:")
-                cleaned_captions=format_transcript(final_result["segments"])
+                # cleaned_captions=format_transcript(final_result["segments"])
                 st.text(cleaned_captions)
         
                 with st.spinner("Generating Ai Summary and extracting essential keypoints..."):

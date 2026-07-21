@@ -3,3 +3,4 @@ venv/
 30 seconds meeting.m4a
 firebase-key.json
 __pycache__/
+.streamlit/secrets.toml
