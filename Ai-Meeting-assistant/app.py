@@ -24,11 +24,14 @@ warnings.filterwarnings("ignore")
 client=genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
 
 #connecting firebase
-if not firebase_admin._apps:
-    firebase_cred=dict(st.secrets["firebase"])
-    cred=credentials.Certificate(firebase_cred)
-    firebase_admin.initialize_app(cred)
-db=firestore.client()
+@st.cache_resource
+def init_connection():
+    if not firebase_admin._apps:
+        firebase_cred=dict(st.secrets["firebase"])
+        cred=credentials.Certificate(firebase_cred)
+        firebase_admin.initialize_app(cred)
+    return firestore.client()
+db=init_connection()
 
 def transcribe_audio(audio_file_path):
     uploaded_audio=client.files.upload(file=audio_file_path)
@@ -111,11 +114,15 @@ if not st.session_state["authentication_status"]:
             email_reg, username_reg, name_reg=authenticator.register_user()
 
             if email_reg:
-                st.toast("User registered successfully!! \n(Please move to login~) ")
 
                 new_user_entry=credential_dict["usernames"][username_reg]
                 db.collection("users").document(username_reg).set(new_user_entry)
 
+                st.session_state["authentication_status"]=True
+                st.session_state["username"]=username_reg
+                st.session_state["name"]=name_reg
+                st.rerun()
+                
         except Exception as e:
             st.sidebar.error(e)
     elif auth_mode=="Login":
@@ -142,7 +149,7 @@ if st.session_state["authentication_status"]:
     with tab_process:
         st.markdown("Upload your meeting video/audio to get started~")
 
-        uploaded_file=st.file_uploader("",type=["mp3","wav","m4a","mp4"])
+        uploaded_file=st.file_uploader("",type=["mp3","wav","m4a","mp4"],label_visibility="hidden")
 
         if uploaded_file:
             save_path=uploaded_file.name
