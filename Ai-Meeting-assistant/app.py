@@ -110,7 +110,9 @@ if not st.session_state["authentication_status"]:
     auth_mode=st.sidebar.pills("Welcome!",["Login","Register a new Account"],default="Login",label_visibility="hidden")
 
     if auth_mode=="Register a new Account":
-        st.info("**Password Requirements:** Must be at least 8 characters long, contain an uppercase letter, a lowercase letter, a number and a special character(eg: @,$, etc..).")
+        st.info("""
+                **Username:** 1-20 characters (letters, numbers, hyphens, underscores) or a valid email address (NO SPACES BETWEEN LETTERS ALLOWED)
+                **Password Requirements:** Must be at least 8 characters long, contain an uppercase letter, a lowercase letter, a number and a special character(eg: @,$, etc..).""")
         try:
             email_reg, username_reg, name_reg=authenticator.register_user()
 
