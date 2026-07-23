@@ -172,7 +172,7 @@ if st.session_state["authentication_status"]:
                 with st.spinner("Processing audio using Gemini AI..."):
                     cleaned_captions=transcribe_audio(save_path)
 
-                "this is the code for transcribing audio, aligning timestamps, and Diarization but i couldn't use this as the whisperx library size was too big for deploying on any free service..."
+                # "this is the code for transcribing audio, aligning timestamps, and Diarization but i couldn't use this as the whisperx library size was too big for deploying on any free service..."
                 # with st.spinner("Transcribing audio...   (this might take a while~)"):
                 #     model=whisperx.load_model("base",DEVICE,compute_type=COMPUTE_TYPE)
                 #     audio=whisperx.load_audio(save_path)
