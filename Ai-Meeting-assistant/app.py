@@ -11,6 +11,7 @@ from firebase_admin import credentials, firestore
 from pinecone import Pinecone
 from fastembed import TextEmbedding
 import streamlit_authenticator as stauth
+import time
 
 
 load_dotenv()
@@ -34,7 +35,11 @@ def init_connection():
 db=init_connection()
 
 def transcribe_audio(audio_file_path):
-    uploaded_audio=client.files.upload(file=audio_file_path)
+    uploaded_file=client.files.upload(file=audio_file_path)
+    while uploaded_file.state.name=="PROCESSING":
+        time.sleep(5)
+        uploaded_file=client.files.get(name=uploaded_file.name)
+
     prompt = """
     Process this meeting audio file and generate a detailed transcription.
     Requirements:
@@ -42,7 +47,7 @@ def transcribe_audio(audio_file_path):
     2. Provide timestamps for the conversation segments.
     3. Output the transcript in a clean, readable format.
     """
-    response=client.models.generate_content(model="gemini-3.1-flash-lite",contents=[prompt,uploaded_audio])
+    response=client.models.generate_content(model="gemini-3.1-flash-lite",contents=[prompt,uploaded_file])
     return response.text
 
 
